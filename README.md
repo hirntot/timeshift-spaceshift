@@ -2,6 +2,8 @@
 
 A **cron**-driven helper for [Timeshift](https://github.com/linuxmint/timeshift) on **Btrfs**. When snapshot storage drives filesystem use past configurable thresholds, it deletes the **oldest** snapshots (down to a **minimum** count) and can **notify** the desktop user. If no graphical session is active, it only logs to a file.
 
+Created and maintained by [RechnerLotsen](https://rechnerlotsen.com). RechnerLotsen supports Linux migration for non-technical users, including a very affordable support subscription model.
+
 **UI language** (log lines and `notify-send` text) follows `LANG` (first component: **de**, **fr**, **es**); anything else uses **English**. Under **cron**, `LANG` is often unset — the script then reads `/etc/default/locale` when present so it matches the distro default. Override explicitly in `/etc/cron.d/timeshift-spaceshift` (e.g. `LANG=de_DE.UTF-8` before the job line) if needed. To add another locale, extend the `l10n()` function in `source_files/usr/sbin/timeshift-spaceshift`.
 
 ---
