@@ -110,11 +110,10 @@ The package installs `/etc/cron.d/timeshift-spaceshift`: runs **hourly** at **mi
 
 ---
 
-## Notes for maintainers (GitHub)
+## Releases
 
-1. Keep **`Homepage:`** in `debian/control` aligned with the public repository URL.
-2. For each release, attach the built `timeshift-spaceshift_<version>_all.deb`. Optionally also upload a source package (`dpkg-buildpackage -S` or `debuild -S`) for PPA-style workflows.
-3. Keep `LICENSE` and copyright year(s) up to date.
+Binary releases include a ready-to-install Debian package (`timeshift-spaceshift_<version>_all.deb`) on GitHub Releases.
+Source-based builds are also possible via `dpkg-buildpackage`.
 
 ---
 
