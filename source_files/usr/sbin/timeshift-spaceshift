@@ -4,10 +4,11 @@
 # Designed to run as root (e.g. cron).
 
 # --- i18n: English catalog + locale overrides (de / fr / es); LANG=* prefix selects UI language ---
-# Cron often has no LANG; fall back to distro default so UI matches the installed system locale.
-if [ -z "${LANG:-}" ] && [ -r /etc/default/locale ]; then
+# Cron often runs with LANG unset or C/POSIX; fall back to distro default locale in those cases.
+if { [ -z "${LANG:-}" ] || [ "${LANG:-}" = "C" ] || [ "${LANG:-}" = "C.UTF-8" ] || [ "${LANG:-}" = "POSIX" ]; } && [ -r /etc/default/locale ]; then
 	# shellcheck disable=SC1091
 	. /etc/default/locale
+	export LANG
 fi
 
 LOCALE_LANG="en"
@@ -182,10 +183,22 @@ if [ -f "$CONFIG" ]; then
 else
 	echo "$(l10n msg_creating_config "$CONFIG")" | tee -a "$LOGFILE"
 	cat >"$CONFIG" <<EOF
-# timeshift-spaceshift configuration (percent / count)
+# This is the config file for timeshift-spaceshift
+# This file is created by the timeshift-spaceshift script.
+# the snapshot limit is set to 3 by default. There will remain at least 3 snapshots.
+
+
+# the disk usage warning limit is set to 90% by default.
 DISK_USAGE_WARNING_LIMIT=90
+
+# the disk usage limit is set to 95% by default.
 DISK_USAGE_LIMIT=95
+
+# the snapshot limit is set to 3 by default. There will remain at least 3 snapshots.
 SNAPSHOT_LIMIT=3
+
+# the maximum age of the last snapshot is set to 7 days by default.
+# if the last snapshot is older than 7 days, it will be deleted.
 MAX_SNAPSHOT_AGE_DAYS=7
 EOF
 	sleep 2

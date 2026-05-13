@@ -130,3 +130,10 @@ The package installs `/etc/cron.d/timeshift-spaceshift`: runs **hourly** at **mi
 ## License
 
 This package is licensed under the **MIT License**. See `LICENSE`.
+
+---
+
+## AI Assistance Notice
+
+Parts of this project (code and documentation) were created or refined with AI assistance using Cursor and Codex 5.3.
+All changes are reviewed by a human maintainer before release.
