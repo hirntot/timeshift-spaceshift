@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# delete the config file, if purge or remove
+if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
+    # remove the logrotate config file
+    rm -f /etc/logrotate.d/timeshift-spaceshift
+    echo "Deleted logrotate config file /etc/logrotate.d/timeshift-spaceshift"
+fi
+
+if [ "$1" = "purge" ]; then
+    # remove the log file
+    rm -f /var/log/timeshift-spaceshift.log
+    echo "Deleted log file /var/log/timeshift-spaceshift.log"
+fi

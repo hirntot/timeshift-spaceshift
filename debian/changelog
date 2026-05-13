@@ -1,0 +1,106 @@
+timeshift-spaceshift (1.0-5) stable; urgency=medium
+
+  * Add MIT `LICENSE` file.
+  * Keep package homepage on rechnerlotsen.com.
+  * Publish sources and release artifacts on GitHub.
+  * Update README license and maintainer notes accordingly.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Wed, 13 May 2026 08:57:34 +0200
+
+
+timeshift-spaceshift (1.0-4) stable; urgency=medium
+
+  * Pre-install btrfs check is now a warning (no install abort).
+  * Runtime checks now notify and exit when Timeshift config is missing.
+  * Runtime check now notifies when latest snapshot is older than 7 days.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Wed, 13 May 2026 08:46:28 +0200
+
+
+timeshift-spaceshift (1.0-3) stable; urgency=medium
+
+  * Add pre-install filesystem check.
+  * Detect filesystem type for `/` and `/home` (if present).
+  * Abort installation when neither mountpoint is btrfs.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Wed, 13 May 2026 08:27:58 +0200
+
+
+timeshift-spaceshift (1.0-2) stable; urgency=medium
+
+  * Add a central i18n layer (`l10n`).
+  * Keep English as default and add overrides for de/fr/es.
+  * Add cron locale fallback via `/etc/default/locale`.
+  * Switch README to English and normalize cron comments.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Wed, 13 May 2026 08:24:31 +0200
+
+
+timeshift-spaceshift (1.0-1) stable; urgency=medium
+
+  * Declare runtime dependencies (`logrotate`, `sudo`, `libnotify-bin`).
+  * Skip desktop notifications when no graphical session is detected.
+  * Quote `notify-send` and `sudo` arguments.
+  * Update logrotate settings (`maxage`, `size 1M`).
+  * Remove unused `LOGFILE_MAXSIZE`.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Wed, 13 May 2026 08:19:36 +0200
+
+
+timeshift-spaceshift (1.0-0) stable; urgency=medium
+
+  * Update RechnerLotsen website and domain references.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Thu, 23 Oct 2025 17:14:16 +0200
+
+
+timeshift-spaceshift (0.8-0) stable; urgency=medium
+
+  * Start public test phase.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Sat, 10 May 2025 06:37:05 +0200
+
+
+timeshift-spaceshift (0.3-5) stable; urgency=medium
+
+  * Run hourly at minute 5 to reduce overlap with Timeshift jobs.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Thu, 08 May 2025 06:13:57 +0200
+
+
+timeshift-spaceshift (0.3-4) stable; urgency=medium
+
+  * Handle the case where another Timeshift instance is already running.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Thu, 08 May 2025 06:12:07 +0200
+
+
+timeshift-spaceshift (0.3-3) stable; urgency=medium
+
+  * Minor fixes.
+  * Add generated configuration file support.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Wed, 07 May 2025 08:02:36 +0200
+
+
+timeshift-spaceshift (0.3-2) stable; urgency=medium
+
+  * Minor fixes.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Tue, 06 May 2025 20:45:23 +0200
+
+
+timeshift-spaceshift (0.3-1) stable; urgency=medium
+
+  * First package build.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Tue, 06 May 2025 20:41:21 +0200
+
+
+timeshift-spaceshift (0.0.1) stable; urgency=medium
+
+  * Initial package setup.
+
+ -- rechnerlotsen.at <info@rechnerlotsen.at>  Thu, 13 Mar 2025 08:15:27 +0100
+
+

@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+
+get_fstype() {
+    local target="$1"
+
+    if command -v findmnt >/dev/null 2>&1; then
+        findmnt -n -o FSTYPE --target "$target" 2>/dev/null || true
+        return
+    fi
+
+    # Fallback when findmnt is unavailable.
+    stat -f -c %T "$target" 2>/dev/null || true
+}
+
+root_fs="$(get_fstype /)"
+home_fs=""
+
+if [ -d /home ]; then
+    home_fs="$(get_fstype /home)"
+fi
+
+if [ "$root_fs" != "btrfs" ] && [ "$home_fs" != "btrfs" ]; then
+    echo "timeshift-spaceshift pre-install warning:" >&2
+    echo "Neither '/' nor '/home' is formatted as btrfs." >&2
+    echo "This package is intended for Timeshift on btrfs systems." >&2
+fi
+
+exit 0

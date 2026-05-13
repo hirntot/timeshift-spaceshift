@@ -1,0 +1,16 @@
+Source: timeshift-spaceshift
+Section: utils
+Priority: optional
+Maintainer: rechnerlotsen.com <info@rechnerlotsen.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+
+Package: timeshift-spaceshift
+Architecture: all
+Depends: ${misc:Depends}, timeshift, btrfs-progs, logrotate, sudo, libnotify-bin
+Description: SpaceShift helps you to free up space on your btrfs disks.
+ SpaceShift is a tool that helps you to free up space on your system by
+ removing old snapshots.
+ If you have a lot of snapshots, it can fill up your disk space on btrfs disks.
+ SpaceShift will remove the oldest snapshots, if the disk space is low.
+Homepage: https://rechnerlotsen.com

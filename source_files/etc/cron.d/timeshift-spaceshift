@@ -1,0 +1,6 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=""
+
+# Hourly as root (minute 5 — offset from Timeshift default schedule)
+5 * * * * root /usr/sbin/timeshift-spaceshift

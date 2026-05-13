@@ -1,0 +1,315 @@
+#!/bin/bash
+# Keeps Timeshift snapshot volumes from filling the disk on btrfs:
+# removes oldest snapshots when usage exceeds limits; optional desktop notify.
+# Designed to run as root (e.g. cron).
+
+# --- i18n: English catalog + locale overrides (de / fr / es); LANG=* prefix selects UI language ---
+# Cron often has no LANG; fall back to distro default so UI matches the installed system locale.
+if [ -z "${LANG:-}" ] && [ -r /etc/default/locale ]; then
+	# shellcheck disable=SC1091
+	. /etc/default/locale
+fi
+
+LOCALE_LANG="en"
+case "$(
+	locale 2>/dev/null | grep '^LANG=' | cut -d= -f2 | cut -d. -f1 | cut -d_ -f1 | tr '[:upper:]' '[:lower:]'
+)" in
+de) LOCALE_LANG="de" ;;
+fr) LOCALE_LANG="fr" ;;
+es) LOCALE_LANG="es" ;;
+*) LOCALE_LANG="en" ;;
+esac
+
+# Usage: l10n <key> [printf args...]  — falls back to English if translation missing
+l10n() {
+	local key="$1"
+	shift
+	case "$LOCALE_LANG" in
+	de)
+		case "$key" in
+		err_logfile) printf 'Fehler: Kein Zugriff auf Logdatei %s.' "$@" && return ;;
+		err_logrotate) printf 'Fehler: logrotate ist nicht installiert.' && return ;;
+		msg_creating_config) printf 'Lege Standardkonfiguration an unter %s' "$@" && return ;;
+		msg_loaded_config) printf 'Konfiguration geladen von %s' "$@" && return ;;
+		info_warn_limit) printf 'Warnschwelle Datenträger (%%): %s' "$@" && return ;;
+		info_disk_limit) printf 'Höchstgrenze Datenträger (%%): %s' "$@" && return ;;
+		info_snapshot_limit) printf 'Mindestanzahl Snapshots: %s' "$@" && return ;;
+		msg_wait_timeshift) printf 'Eine andere Timeshift-Instanz läuft. Warte ...' && return ;;
+		err_exit_timeshift_running) printf 'Fehler: Eine andere Timeshift-Instanz läuft. Beende.' && return ;;
+		err_timeshift_not_setup) printf 'Fehler: Timeshift ist nicht richtig eingerichtet.' && return ;;
+		err_not_btrfs) printf 'Fehler: %s ist nicht mit btrfs formatiert.' "$@" && return ;;
+		notify_title) printf 'Timeshift SpaceShift' && return ;;
+		line_disk_usage) printf '%s: Belegung von %s: %s%%.' "$@" && return ;;
+		msg_above_limit_log) printf 'Belegung über Grenzwert (%s%%). Lösche älteste Snapshots ...' "$@" && return ;;
+		notify_above_limit) printf 'Warnung: Belegung von %s über Grenzwert (%s%%). Lösche älteste Snapshots ...' "$@" && return ;;
+		msg_total_snap) printf 'Snapshots gesamt: %s' "$@" && return ;;
+		msg_no_more_log) printf 'Nur noch %s Snapshots. Keine weiteren Löschungen.' "$@" && return ;;
+		notify_no_more) printf 'Nur noch %s Snapshots. Keine weiteren Löschungen.' "$@" && return ;;
+		msg_deleting) printf 'Lösche ältesten Snapshot ...' && return ;;
+		msg_rechecked) printf 'Erneut gemessen: %s%%' "$@" && return ;;
+		msg_under_limit) printf 'Belegung jetzt unter dem Grenzwert.' && return ;;
+		warn_threshold_log) printf 'Warnung: Belegung von %s über Warnschwelle (%s%%).' "$@" && return ;;
+		notify_warn_threshold) printf 'Warnung: Belegung von %s über Warnschwelle (%s%%).' "$@" && return ;;
+		msg_ok) printf 'OK: Belegung von %s: %s%%.' "$@" && return ;;
+		esac
+		;;
+	fr)
+		case "$key" in
+		err_logfile) printf 'Erreur : impossible d'\''accéder au journal %s.' "$@" && return ;;
+		err_logrotate) printf 'Erreur : logrotate n'\''est pas installé.' && return ;;
+		msg_creating_config) printf 'Création de la configuration par défaut dans %s' "$@" && return ;;
+		msg_loaded_config) printf 'Configuration chargée depuis %s' "$@" && return ;;
+		info_warn_limit) printf 'Seuil d'\''alerte disque (%%) : %s' "$@" && return ;;
+		info_disk_limit) printf 'Limite disque (%%) : %s' "$@" && return ;;
+		info_snapshot_limit) printf 'Nombre minimal de snapshots : %s' "$@" && return ;;
+		msg_wait_timeshift) printf 'Une autre instance de Timeshift tourne. Attente ...' && return ;;
+		err_exit_timeshift_running) printf 'Erreur : une autre instance de Timeshift est en cours. Arrêt.' && return ;;
+		err_timeshift_not_setup) printf 'Erreur : Timeshift n'\''est pas correctement configuré.' && return ;;
+		err_not_btrfs) printf 'Erreur : %s n'\''est pas formaté en btrfs.' "$@" && return ;;
+		notify_title) printf 'Timeshift SpaceShift' && return ;;
+		line_disk_usage) printf '%s : utilisation de %s : %s %%.' "$@" && return ;;
+		msg_above_limit_log) printf 'Utilisation au-dessus de la limite (%s %%). Suppression des snapshots les plus anciens ...' "$@" && return ;;
+		notify_above_limit) printf 'Avertissement : utilisation de %s au-dessus de la limite (%s %%). Suppression des snapshots les plus anciens ...' "$@" && return ;;
+		msg_total_snap) printf 'Nombre total de snapshots : %s' "$@" && return ;;
+		msg_no_more_log) printf 'Il ne reste que %s snapshots. Plus de suppressions.' "$@" && return ;;
+		notify_no_more) printf 'Il ne reste que %s snapshots. Plus de suppressions.' "$@" && return ;;
+		msg_deleting) printf 'Suppression du snapshot le plus ancien ...' && return ;;
+		msg_rechecked) printf 'Nouvelle mesure : %s %%' "$@" && return ;;
+		msg_under_limit) printf 'Utilisation maintenant sous la limite.' && return ;;
+		warn_threshold_log) printf 'Avertissement : utilisation de %s au-dessus du seuil (%s %%).' "$@" && return ;;
+		notify_warn_threshold) printf 'Avertissement : utilisation de %s au-dessus du seuil (%s %%).' "$@" && return ;;
+		msg_ok) printf 'OK : utilisation de %s : %s %%.' "$@" && return ;;
+		esac
+		;;
+	es)
+		case "$key" in
+		err_logfile) printf 'Error: no se puede acceder al archivo de registro %s.' "$@" && return ;;
+		err_logrotate) printf 'Error: logrotate no está instalado.' && return ;;
+		msg_creating_config) printf 'Creando configuración por defecto en %s' "$@" && return ;;
+		msg_loaded_config) printf 'Configuración cargada desde %s' "$@" && return ;;
+		info_warn_limit) printf 'Umbral de aviso de disco (%%): %s' "$@" && return ;;
+		info_disk_limit) printf 'Límite de disco (%%): %s' "$@" && return ;;
+		info_snapshot_limit) printf 'Mínimo de snapshots: %s' "$@" && return ;;
+		msg_wait_timeshift) printf 'Otra instancia de Timeshift está en ejecución. Esperando ...' && return ;;
+		err_exit_timeshift_running) printf 'Error: otra instancia de Timeshift está en ejecución. Saliendo.' && return ;;
+		err_timeshift_not_setup) printf 'Error: Timeshift no está configurado correctamente.' && return ;;
+		err_not_btrfs) printf 'Error: %s no está formateado con btrfs.' "$@" && return ;;
+		notify_title) printf 'Timeshift SpaceShift' && return ;;
+		line_disk_usage) printf '%s: uso de %s: %s%%.' "$@" && return ;;
+		msg_above_limit_log) printf 'Uso por encima del límite (%s%%). Eliminando snapshots más antiguos ...' "$@" && return ;;
+		notify_above_limit) printf 'Aviso: uso de %s por encima del límite (%s%%). Eliminando snapshots más antiguos ...' "$@" && return ;;
+		msg_total_snap) printf 'Snapshots en total: %s' "$@" && return ;;
+		msg_no_more_log) printf 'Solo quedan %s snapshots. No hay más eliminaciones.' "$@" && return ;;
+		notify_no_more) printf 'Solo quedan %s snapshots. No hay más eliminaciones.' "$@" && return ;;
+		msg_deleting) printf 'Eliminando el snapshot más antiguo ...' && return ;;
+		msg_rechecked) printf 'Uso revisado: %s%%' "$@" && return ;;
+		msg_under_limit) printf 'Uso ahora por debajo del límite.' && return ;;
+		warn_threshold_log) printf 'Aviso: uso de %s por encima del umbral (%s%%).' "$@" && return ;;
+		notify_warn_threshold) printf 'Aviso: uso de %s por encima del umbral (%s%%).' "$@" && return ;;
+		msg_ok) printf 'OK: uso de %s: %s%%.' "$@" && return ;;
+		esac
+		;;
+	esac
+	case "$key" in
+	err_logfile) printf 'Error: Cannot access logfile %s.' "$@" ;;
+	err_logrotate) printf 'Error: logrotate is not installed.' ;;
+	msg_creating_config) printf 'Creating default config at %s' "$@" ;;
+	msg_loaded_config) printf 'Loaded config from %s' "$@" ;;
+	info_warn_limit) printf 'Disk usage warning limit: %s' "$@" ;;
+	info_disk_limit) printf 'Disk usage limit: %s' "$@" ;;
+	info_snapshot_limit) printf 'Snapshot limit: %s' "$@" ;;
+	msg_wait_timeshift) printf 'Another instance of Timeshift is running. Waiting...' ;;
+	err_exit_timeshift_running) printf 'Error: Another instance of Timeshift is running. Exiting.' ;;
+	err_timeshift_not_setup) printf 'Error: Timeshift is not properly set up.' ;;
+	err_timeshift_config_missing) printf 'Error: Timeshift config file is missing: %s' "$@" ;;
+	err_not_btrfs) printf 'Error: %s is not formatted with btrfs.' "$@" ;;
+	warn_last_snapshot_old) printf 'Warning: Last Timeshift snapshot (%s) is older than %s days.' "$@" ;;
+	notify_title) printf 'Timeshift SpaceShift' ;;
+	line_disk_usage) printf '%s: Disk usage of %s is %s%%.' "$@" ;;
+	msg_above_limit_log) printf 'Usage is above limit (%s%%). Deleting oldest snapshots...' "$@" ;;
+	notify_above_limit) printf 'Warning: Disk usage of %s is above limit (%s%%). Deleting oldest snapshots...' "$@" ;;
+	msg_total_snap) printf 'Total snapshots: %s' "$@" ;;
+	msg_no_more_log) printf 'Only %s snapshots left. No more deletions.' "$@" ;;
+	notify_no_more) printf 'Only %s snapshots left. No more deletions.' "$@" ;;
+	msg_deleting) printf 'Deleting oldest snapshot...' ;;
+	msg_rechecked) printf 'Rechecked usage: %s%%' "$@" ;;
+	msg_under_limit) printf 'Disk usage now under limit.' ;;
+	warn_threshold_log) printf 'Warning: Usage of %s is above warning threshold (%s%%).' "$@" ;;
+	notify_warn_threshold) printf 'Warning: Disk usage of %s is above warning threshold (%s%%).' "$@" ;;
+	msg_ok) printf 'OK: %s usage is %s%%.' "$@" ;;
+	*) printf '%s' "$key" ;;
+	esac
+}
+
+# --- 0. Logging ---
+LOGFILE="/var/log/timeshift-spaceshift.log"
+LOGFILE_MAXBACKUPS=5
+LOGFILE_MAXAGE=7
+
+mkdir -p "$(dirname "$LOGFILE")"
+touch "$LOGFILE"
+
+if [ ! -w "$LOGFILE" ] || [ ! -r "$LOGFILE" ]; then
+	echo "$(l10n err_logfile "$LOGFILE")" >&2
+	exit 1
+fi
+
+if [ ! -x "$(command -v logrotate)" ]; then
+	echo "$(l10n err_logrotate)" | tee -a "$LOGFILE"
+	exit 1
+fi
+
+LOGROTATE_CONF="/etc/logrotate.d/timeshift-spaceshift"
+if [ ! -f "$LOGROTATE_CONF" ]; then
+	cat >"$LOGROTATE_CONF" <<EOF
+$LOGFILE {
+    daily
+    rotate $LOGFILE_MAXBACKUPS
+    maxage $LOGFILE_MAXAGE
+    size 1M
+    compress
+    missingok
+    notifempty
+    create 0640 root root
+}
+EOF
+fi
+
+CONFIG="/etc/timeshift/timeshift-spaceshift.conf"
+if [ -f "$CONFIG" ]; then
+	# shellcheck disable=SC1090
+	source "$CONFIG"
+else
+	echo "$(l10n msg_creating_config "$CONFIG")" | tee -a "$LOGFILE"
+	cat >"$CONFIG" <<EOF
+# timeshift-spaceshift configuration (percent / count)
+DISK_USAGE_WARNING_LIMIT=90
+DISK_USAGE_LIMIT=95
+SNAPSHOT_LIMIT=3
+MAX_SNAPSHOT_AGE_DAYS=7
+EOF
+	sleep 2
+	# shellcheck disable=SC1090
+	source "$CONFIG"
+fi
+if [ -z "${MAX_SNAPSHOT_AGE_DAYS:-}" ]; then
+	MAX_SNAPSHOT_AGE_DAYS=7
+fi
+echo "$(l10n msg_loaded_config "$CONFIG")" | tee -a "$LOGFILE"
+echo "$(l10n info_warn_limit "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
+echo "$(l10n info_disk_limit "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
+echo "$(l10n info_snapshot_limit "$SNAPSHOT_LIMIT")" | tee -a "$LOGFILE"
+
+send_notification() {
+	local body="$1"
+	local display=":$(ls /tmp/.X11-unix/* 2>/dev/null | sed 's#/tmp/.X11-unix/X##' | head -n 1)"
+	if [ -z "$display" ] || [ "$display" = ":" ]; then
+		return 0
+	fi
+
+	local user
+	user=$(who | grep '('"$display"')' | awk '{print $1}' | head -n 1)
+	[ -n "$user" ] || return 0
+
+	local uid
+	uid=$(id -u "$user")
+
+	sudo -u "$user" DISPLAY="$display" DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus notify-send "$(l10n notify_title)" "$body" \
+		--icon=dialog-warning --urgency=critical --expire-time=10000
+}
+
+# --- 1. Timeshift ---
+TIMESHIFT_CONFIG="/etc/timeshift/timeshift.json"
+
+if [ ! -f "$TIMESHIFT_CONFIG" ]; then
+	echo "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")" | tee -a "$LOGFILE"
+	send_notification "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")"
+	exit 1
+fi
+
+for _i in $(seq 1 3); do
+	output=$(timeshift --list 2>&1)
+	if echo "$output" | grep -q "Another instance of this application is running"; then
+		echo "$(l10n msg_wait_timeshift)" | tee -a "$LOGFILE"
+		sleep 5
+	else
+		break
+	fi
+done
+
+if echo "$output" | grep -q "Another instance of this application is running"; then
+	echo "$(l10n err_exit_timeshift_running)" | tee -a "$LOGFILE"
+	send_notification "$(l10n err_exit_timeshift_running)"
+	exit 1
+
+elif ! echo "$output" | grep -q "Mounted '/dev/"; then
+	echo "$(l10n err_timeshift_not_setup)" | tee -a "$LOGFILE"
+	send_notification "$(l10n err_timeshift_not_setup)"
+	exit 1
+fi
+
+latest_snapshot=$(echo "$output" | grep -Eo '[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}' | sort | tail -n1)
+if [ -n "$latest_snapshot" ]; then
+	snapshot_date="${latest_snapshot%%_*}"
+	snapshot_time="${latest_snapshot##*_}"
+	snapshot_time="${snapshot_time//-/:}"
+	snapshot_epoch=$(date -d "$snapshot_date $snapshot_time" +%s 2>/dev/null || true)
+	if [ -n "$snapshot_epoch" ]; then
+		now_epoch=$(date +%s)
+		snapshot_age_days=$(( (now_epoch - snapshot_epoch) / 86400 ))
+		if [ "$snapshot_age_days" -gt "$MAX_SNAPSHOT_AGE_DAYS" ]; then
+			echo "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")" | tee -a "$LOGFILE"
+			send_notification "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")"
+		fi
+	fi
+fi
+
+partitions=$(echo "$output" | grep "Mounted '/dev/" | awk -F"'" '{print $2}' | xargs -n1 basename)
+
+for partition in $partitions; do
+	fstype=$(lsblk -no FSTYPE "/dev/$partition")
+	if [ "$fstype" != "btrfs" ]; then
+		echo "$(l10n err_not_btrfs "/dev/$partition")" | tee -a "$LOGFILE"
+		send_notification "$(l10n err_not_btrfs "/dev/$partition")"
+		exit 1
+	fi
+done
+
+for partition in $partitions; do
+
+	disk_usage=$(df -h | grep "$partition" | awk '{print $5; exit}')
+	disk_usage=${disk_usage%?}
+
+	echo "$(l10n line_disk_usage "$(date)" "$partition" "$disk_usage")" | tee -a "$LOGFILE"
+
+	if [ "$disk_usage" -gt "$DISK_USAGE_LIMIT" ]; then
+		echo "$(l10n msg_above_limit_log "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
+		send_notification "$(l10n notify_above_limit "$partition" "$DISK_USAGE_LIMIT")"
+
+		while true; do
+			total_snapshots=$(timeshift --list | grep -c "    >  ")
+			echo "$(l10n msg_total_snap "$total_snapshots")" | tee -a "$LOGFILE"
+			if [ "$total_snapshots" -le "$SNAPSHOT_LIMIT" ]; then
+				echo "$(l10n msg_no_more_log "$total_snapshots")" | tee -a "$LOGFILE"
+				send_notification "$(l10n notify_no_more "$total_snapshots")"
+				break
+			fi
+
+			echo "$(l10n msg_deleting)" | tee -a "$LOGFILE"
+			echo "0" | timeshift --delete >>"$LOGFILE" 2>&1
+
+			disk_usage=$(df -h | grep "$partition" | awk '{print $5; exit}')
+			disk_usage=${disk_usage%?}
+			echo "$(l10n msg_rechecked "$disk_usage")" | tee -a "$LOGFILE"
+			if [ "$disk_usage" -le "$DISK_USAGE_LIMIT" ]; then
+				echo "$(l10n msg_under_limit)" | tee -a "$LOGFILE"
+				break
+			fi
+		done
+	elif [ "$disk_usage" -gt "$DISK_USAGE_WARNING_LIMIT" ]; then
+		echo "$(l10n warn_threshold_log "$partition" "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
+		send_notification "$(l10n notify_warn_threshold "$partition" "$DISK_USAGE_WARNING_LIMIT")"
+	else
+		echo "$(l10n msg_ok "$partition" "$disk_usage")" | tee -a "$LOGFILE"
+	fi
+done
