@@ -6,6 +6,8 @@ Created and maintained by [RechnerLotsen](https://rechnerlotsen.com). RechnerLot
 
 **UI language** (log lines and `notify-send` text) follows `LANG` (first component: **de**, **fr**, **es**); anything else uses **English**. Under **cron**, `LANG` is often unset — the script then reads `/etc/default/locale` when present so it matches the distro default. Override explicitly in `/etc/cron.d/timeshift-spaceshift` (e.g. `LANG=de_DE.UTF-8` before the job line) if needed. To add another locale, extend the `l10n()` function in `source_files/usr/sbin/timeshift-spaceshift`.
 
+Desktop notifications use `notify-send --replace-id=…` so repeated runs (for example hourly cron) **update the same bubble** instead of stacking many identical pop-ups.
+
 ---
 
 ## Requirements

@@ -183,22 +183,18 @@ if [ -f "$CONFIG" ]; then
 else
 	echo "$(l10n msg_creating_config "$CONFIG")" | tee -a "$LOGFILE"
 	cat >"$CONFIG" <<EOF
-# This is the config file for timeshift-spaceshift
-# This file is created by the timeshift-spaceshift script.
-# the snapshot limit is set to 3 by default. There will remain at least 3 snapshots.
+# timeshift-spaceshift configuration
 
-
-# the disk usage warning limit is set to 90% by default.
+# Disk usage warning threshold (%): notify only (no deletions).
 DISK_USAGE_WARNING_LIMIT=90
 
-# the disk usage limit is set to 95% by default.
+# Disk usage limit (%): delete oldest snapshots until usage drops or SNAPSHOT_LIMIT is reached.
 DISK_USAGE_LIMIT=95
 
-# the snapshot limit is set to 3 by default. There will remain at least 3 snapshots.
+# Minimum number of snapshots to keep when deleting for space.
 SNAPSHOT_LIMIT=3
 
-# the maximum age of the last snapshot is set to 7 days by default.
-# if the last snapshot is older than 7 days, it will be deleted.
+# Warn if the newest Timeshift snapshot is older than this many days (does not delete snapshots).
 MAX_SNAPSHOT_AGE_DAYS=7
 EOF
 	sleep 2
@@ -208,13 +204,27 @@ fi
 if [ -z "${MAX_SNAPSHOT_AGE_DAYS:-}" ]; then
 	MAX_SNAPSHOT_AGE_DAYS=7
 fi
+
+# Stable notify-send --replace-id values (uint). Same ID updates/replaces the previous bubble instead of stacking.
+RID_ERR_CONFIG_MISSING=60001
+RID_ERR_TIMESHIFT_RUNNING=60002
+RID_ERR_TIMESHIFT_NOT_SETUP=60003
+RID_STALE_SNAPSHOT=61201
+RID_SNAPSHOT_LIMIT_REACHED=61401
+
+notify_replace_id() {
+	printf '%s' "$2" | cksum | awk -v base="$1" '{print base + ($1 % 7999)}'
+}
+
 echo "$(l10n msg_loaded_config "$CONFIG")" | tee -a "$LOGFILE"
 echo "$(l10n info_warn_limit "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
 echo "$(l10n info_disk_limit "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
 echo "$(l10n info_snapshot_limit "$SNAPSHOT_LIMIT")" | tee -a "$LOGFILE"
 
+# Optional second argument: notify-send --replace-id (updates same desktop notification instead of opening another).
 send_notification() {
 	local body="$1"
+	local replace_id="${2:-}"
 	local display=":$(ls /tmp/.X11-unix/* 2>/dev/null | sed 's#/tmp/.X11-unix/X##' | head -n 1)"
 	if [ -z "$display" ] || [ "$display" = ":" ]; then
 		return 0
@@ -227,8 +237,14 @@ send_notification() {
 	local uid
 	uid=$(id -u "$user")
 
-	sudo -u "$user" DISPLAY="$display" DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus notify-send "$(l10n notify_title)" "$body" \
-		--icon=dialog-warning --urgency=critical --expire-time=10000
+	local cmd
+	cmd=(notify-send --icon=dialog-warning --urgency=critical --expire-time=10000)
+	if [ -n "$replace_id" ]; then
+		cmd+=(--replace-id="$replace_id")
+	fi
+	cmd+=("$(l10n notify_title)" "$body")
+
+	sudo -u "$user" DISPLAY="$display" DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus "${cmd[@]}"
 }
 
 # --- 1. Timeshift ---
@@ -236,7 +252,7 @@ TIMESHIFT_CONFIG="/etc/timeshift/timeshift.json"
 
 if [ ! -f "$TIMESHIFT_CONFIG" ]; then
 	echo "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")"
+	send_notification "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")" "$RID_ERR_CONFIG_MISSING"
 	exit 1
 fi
 
@@ -252,12 +268,12 @@ done
 
 if echo "$output" | grep -q "Another instance of this application is running"; then
 	echo "$(l10n err_exit_timeshift_running)" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_exit_timeshift_running)"
+	send_notification "$(l10n err_exit_timeshift_running)" "$RID_ERR_TIMESHIFT_RUNNING"
 	exit 1
 
 elif ! echo "$output" | grep -q "Mounted '/dev/"; then
 	echo "$(l10n err_timeshift_not_setup)" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_timeshift_not_setup)"
+	send_notification "$(l10n err_timeshift_not_setup)" "$RID_ERR_TIMESHIFT_NOT_SETUP"
 	exit 1
 fi
 
@@ -272,7 +288,7 @@ if [ -n "$latest_snapshot" ]; then
 		snapshot_age_days=$(( (now_epoch - snapshot_epoch) / 86400 ))
 		if [ "$snapshot_age_days" -gt "$MAX_SNAPSHOT_AGE_DAYS" ]; then
 			echo "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")" | tee -a "$LOGFILE"
-			send_notification "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")"
+			send_notification "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")" "$RID_STALE_SNAPSHOT"
 		fi
 	fi
 fi
@@ -282,8 +298,9 @@ partitions=$(echo "$output" | grep "Mounted '/dev/" | awk -F"'" '{print $2}' | x
 for partition in $partitions; do
 	fstype=$(lsblk -no FSTYPE "/dev/$partition")
 	if [ "$fstype" != "btrfs" ]; then
+		rid_btrfs=$(notify_replace_id 100000 "btrfs:${partition}")
 		echo "$(l10n err_not_btrfs "/dev/$partition")" | tee -a "$LOGFILE"
-		send_notification "$(l10n err_not_btrfs "/dev/$partition")"
+		send_notification "$(l10n err_not_btrfs "/dev/$partition")" "$rid_btrfs"
 		exit 1
 	fi
 done
@@ -296,15 +313,16 @@ for partition in $partitions; do
 	echo "$(l10n line_disk_usage "$(date)" "$partition" "$disk_usage")" | tee -a "$LOGFILE"
 
 	if [ "$disk_usage" -gt "$DISK_USAGE_LIMIT" ]; then
+		rid_limit=$(notify_replace_id 120000 "limit:${partition}")
 		echo "$(l10n msg_above_limit_log "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
-		send_notification "$(l10n notify_above_limit "$partition" "$DISK_USAGE_LIMIT")"
+		send_notification "$(l10n notify_above_limit "$partition" "$DISK_USAGE_LIMIT")" "$rid_limit"
 
 		while true; do
 			total_snapshots=$(timeshift --list | grep -c "    >  ")
 			echo "$(l10n msg_total_snap "$total_snapshots")" | tee -a "$LOGFILE"
 			if [ "$total_snapshots" -le "$SNAPSHOT_LIMIT" ]; then
 				echo "$(l10n msg_no_more_log "$total_snapshots")" | tee -a "$LOGFILE"
-				send_notification "$(l10n notify_no_more "$total_snapshots")"
+				send_notification "$(l10n notify_no_more "$total_snapshots")" "$RID_SNAPSHOT_LIMIT_REACHED"
 				break
 			fi
 
@@ -320,8 +338,9 @@ for partition in $partitions; do
 			fi
 		done
 	elif [ "$disk_usage" -gt "$DISK_USAGE_WARNING_LIMIT" ]; then
+		rid_warn=$(notify_replace_id 140000 "warn:${partition}")
 		echo "$(l10n warn_threshold_log "$partition" "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
-		send_notification "$(l10n notify_warn_threshold "$partition" "$DISK_USAGE_WARNING_LIMIT")"
+		send_notification "$(l10n notify_warn_threshold "$partition" "$DISK_USAGE_WARNING_LIMIT")" "$rid_warn"
 	else
 		echo "$(l10n msg_ok "$partition" "$disk_usage")" | tee -a "$LOGFILE"
 	fi

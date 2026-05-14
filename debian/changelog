@@ -1,3 +1,11 @@
+timeshift-spaceshift (1.0-7) stable; urgency=medium
+
+  * Use notify-send --replace-id for all desktop alerts (updates same bubble instead of stacking).
+  * Remove notification cooldown state files and related config keys.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Thu, 14 May 2026 12:59:42 +0200
+
+
 timeshift-spaceshift (1.0-6) stable; urgency=medium
 
   * Fix locale handling for cron environments (`LANG=C`, `C.UTF-8`, `POSIX`).

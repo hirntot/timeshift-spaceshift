@@ -11,4 +11,6 @@ if [ "$1" = "purge" ]; then
     # remove the log file
     rm -f /var/log/timeshift-spaceshift.log
     echo "Deleted log file /var/log/timeshift-spaceshift.log"
+    rm -rf /var/lib/timeshift-spaceshift
+    echo "Deleted state directory /var/lib/timeshift-spaceshift"
 fi
