@@ -1,3 +1,12 @@
+timeshift-spaceshift (1.0-8) stable; urgency=medium
+
+  * Document notify-send replace-id limitations across separate runs.
+  * Add short desktop notification dedupe window (NOTIFY_DEDUPE_SECONDS, default 90s).
+  * Use fixed app name, persistent expire time (0), and keep replace-id as a best-effort hint.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Thu, 14 May 2026 13:10:33 +0200
+
+
 timeshift-spaceshift (1.0-7) stable; urgency=medium
 
   * Use notify-send --replace-id for all desktop alerts (updates same bubble instead of stacking).

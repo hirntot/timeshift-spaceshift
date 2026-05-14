@@ -6,7 +6,9 @@ Created and maintained by [RechnerLotsen](https://rechnerlotsen.com). RechnerLot
 
 **UI language** (log lines and `notify-send` text) follows `LANG` (first component: **de**, **fr**, **es**); anything else uses **English**. Under **cron**, `LANG` is often unset — the script then reads `/etc/default/locale` when present so it matches the distro default. Override explicitly in `/etc/cron.d/timeshift-spaceshift` (e.g. `LANG=de_DE.UTF-8` before the job line) if needed. To add another locale, extend the `l10n()` function in `source_files/usr/sbin/timeshift-spaceshift`.
 
-Desktop notifications use `notify-send --replace-id=…` so repeated runs (for example hourly cron) **update the same bubble** instead of stacking many identical pop-ups.
+Desktop notifications use a **fixed `notify-send` app name** and **`--replace-id`** where supported. On many desktops, **replace-id only applies within a single client connection**; each `notify-send` run is a new short-lived process, so **back-to-back script runs can still stack bubbles**.
+
+To cover that real-world case, the script also **deduplicates identical popups** for the same replace-id if they repeat within **`NOTIFY_DEDUPE_SECONDS`** (default: 90 seconds). Set to `0` to disable dedupe.
 
 ---
 
@@ -61,6 +63,8 @@ File: `/etc/timeshift/timeshift-spaceshift.conf`
 | `DISK_USAGE_WARNING_LIMIT` | Above this usage (%): warn only (notification + log) | `90` |
 | `DISK_USAGE_LIMIT` | Above this: delete oldest snapshots until below limit or minimum count reached | `95` |
 | `SNAPSHOT_LIMIT` | Minimum number of snapshots to keep | `3` |
+| `MAX_SNAPSHOT_AGE_DAYS` | Warn if the newest snapshot is older than this many days | `7` |
+| `NOTIFY_DEDUPE_SECONDS` | Suppress identical desktop popups for the same alert within this window (`0` disables) | `90` |
 
 Changes apply on the next cron run.
 
