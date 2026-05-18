@@ -1,3 +1,11 @@
+timeshift-spaceshift (1.0-9) stable; urgency=medium
+
+  * Skip desktop notifications during sleep/suspend and when no active non-idle user session (logind).
+  * Remove replace-id/dedupe notification logic; log-only when the user is not at the PC.
+
+ -- rechnerlotsen.com <info@rechnerlotsen.com>  Mon, 18 May 2026 12:14:12 +0200
+
+
 timeshift-spaceshift (1.0-8) stable; urgency=medium
 
   * Document notify-send replace-id limitations across separate runs.

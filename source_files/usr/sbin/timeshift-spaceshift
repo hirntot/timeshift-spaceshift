@@ -52,7 +52,7 @@ l10n() {
 		warn_threshold_log) printf 'Warnung: Belegung von %s über Warnschwelle (%s%%).' "$@" && return ;;
 		notify_warn_threshold) printf 'Warnung: Belegung von %s über Warnschwelle (%s%%).' "$@" && return ;;
 		msg_ok) printf 'OK: Belegung von %s: %s%%.' "$@" && return ;;
-		msg_notify_dedupe) printf 'Desktop-Benachrichtigung übersprungen (gleiche Meldung innerhalb von %ss).' "$@" && return ;;
+		msg_notify_skipped_inactive) printf 'Desktop-Benachrichtigung übersprungen (System im Ruhezustand/Suspend oder keine aktive Sitzung).' && return ;;
 		esac
 		;;
 	fr)
@@ -81,7 +81,7 @@ l10n() {
 		warn_threshold_log) printf 'Avertissement : utilisation de %s au-dessus du seuil (%s %%).' "$@" && return ;;
 		notify_warn_threshold) printf 'Avertissement : utilisation de %s au-dessus du seuil (%s %%).' "$@" && return ;;
 		msg_ok) printf 'OK : utilisation de %s : %s %%.' "$@" && return ;;
-		msg_notify_dedupe) printf 'Notification bureau ignorée (doublon dans les %ss).' "$@" && return ;;
+		msg_notify_skipped_inactive) printf 'Notification bureau ignorée (veille/suspension ou aucune session active).' && return ;;
 		esac
 		;;
 	es)
@@ -110,7 +110,7 @@ l10n() {
 		warn_threshold_log) printf 'Aviso: uso de %s por encima del umbral (%s%%).' "$@" && return ;;
 		notify_warn_threshold) printf 'Aviso: uso de %s por encima del umbral (%s%%).' "$@" && return ;;
 		msg_ok) printf 'OK: uso de %s: %s%%.' "$@" && return ;;
-		msg_notify_dedupe) printf 'Notificación omitida (duplicado en %ss).' "$@" && return ;;
+		msg_notify_skipped_inactive) printf 'Notificación omitida (suspensión/inactividad o sin sesión activa).' && return ;;
 		esac
 		;;
 	esac
@@ -141,7 +141,7 @@ l10n() {
 	warn_threshold_log) printf 'Warning: Usage of %s is above warning threshold (%s%%).' "$@" ;;
 	notify_warn_threshold) printf 'Warning: Disk usage of %s is above warning threshold (%s%%).' "$@" ;;
 	msg_ok) printf 'OK: %s usage is %s%%.' "$@" ;;
-	msg_notify_dedupe) printf 'Desktop notification skipped (duplicate within %ss).' "$@" ;;
+	msg_notify_skipped_inactive) printf 'Desktop notification skipped (sleep/suspend or no active user session).' ;;
 	*) printf '%s' "$key" ;;
 	esac
 }
@@ -201,8 +201,6 @@ SNAPSHOT_LIMIT=3
 # Warn if the newest Timeshift snapshot is older than this many days (does not delete snapshots).
 MAX_SNAPSHOT_AGE_DAYS=7
 
-# Skip identical desktop popups if the script runs again within this many seconds (0 = off).
-NOTIFY_DEDUPE_SECONDS=90
 EOF
 	sleep 2
 	# shellcheck disable=SC1090
@@ -212,19 +210,50 @@ if [ -z "${MAX_SNAPSHOT_AGE_DAYS:-}" ]; then
 	MAX_SNAPSHOT_AGE_DAYS=7
 fi
 
-: "${NOTIFY_DEDUPE_SECONDS:=90}"
-NOTIFY_DEDUPE_DIR="${NOTIFY_DEDUPE_DIR:-/run/timeshift-spaceshift}"
 NOTIFY_APP_NAME="${NOTIFY_APP_NAME:-timeshift-spaceshift}"
 
-# Stable notify-send --replace-id values (uint). Same ID may update an existing bubble on some desktops.
-RID_ERR_CONFIG_MISSING=60001
-RID_ERR_TIMESHIFT_RUNNING=60002
-RID_ERR_TIMESHIFT_NOT_SETUP=60003
-RID_STALE_SNAPSHOT=61201
-RID_SNAPSHOT_LIMIT_REACHED=61401
+# Return 0 when the machine looks awake and a user is at an active (non-idle) graphical session.
+desktop_notify_allowed() {
+	local t
+	for t in sleep suspend hibernate hybrid-sleep; do
+		if systemctl is-active --quiet "${t}.target" 2>/dev/null; then
+			return 1
+		fi
+	done
 
-notify_replace_id() {
-	printf '%s' "$2" | cksum | awk -v base="$1" '{print base + ($1 % 7999)}'
+	if command -v gdbus >/dev/null 2>&1; then
+		local prep
+		prep=$(gdbus get --system -o /org/freedesktop/login1 \
+			-d org.freedesktop.login1 -p org.freedesktop.login1.Manager \
+			PreparingForSleep 2>/dev/null || true)
+		case "$prep" in
+		true | \<true\>) return 1 ;;
+		esac
+	fi
+
+	if ! command -v loginctl >/dev/null 2>&1; then
+		return 0
+	fi
+
+	local sid stype sstate sidle
+	local found_active=0
+	while read -r sid _ _ _ _; do
+		[ -n "$sid" ] || continue
+		stype=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || continue
+		case "$stype" in
+		x11 | wayland | tty) ;;
+		*) continue ;;
+		esac
+		sstate=$(loginctl show-session "$sid" -p State --value 2>/dev/null) || continue
+		[ "$sstate" = "active" ] || continue
+		sidle=$(loginctl show-session "$sid" -p IdleHint --value 2>/dev/null) || continue
+		if [ "$sidle" != "yes" ]; then
+			found_active=1
+			break
+		fi
+	done < <(loginctl list-sessions --no-legend 2>/dev/null)
+
+	[ "$found_active" -eq 1 ]
 }
 
 echo "$(l10n msg_loaded_config "$CONFIG")" | tee -a "$LOGFILE"
@@ -232,10 +261,14 @@ echo "$(l10n info_warn_limit "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
 echo "$(l10n info_disk_limit "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
 echo "$(l10n info_snapshot_limit "$SNAPSHOT_LIMIT")" | tee -a "$LOGFILE"
 
-# Optional second argument: notify-send --replace-id (best-effort; see README).
 send_notification() {
 	local body="$1"
-	local replace_id="${2:-0}"
+
+	if ! desktop_notify_allowed; then
+		echo "$(l10n msg_notify_skipped_inactive)" | tee -a "$LOGFILE"
+		return 0
+	fi
+
 	local display=":$(ls /tmp/.X11-unix/* 2>/dev/null | sed 's#/tmp/.X11-unix/X##' | head -n 1)"
 	if [ -z "$display" ] || [ "$display" = ":" ]; then
 		return 0
@@ -248,42 +281,9 @@ send_notification() {
 	local uid
 	uid=$(id -u "$user")
 
-	local body_hash
-	if command -v sha256sum >/dev/null 2>&1; then
-		body_hash=$(printf '%s' "$body" | sha256sum | awk '{print $1}')
-	else
-		body_hash=$(printf '%s' "$body" | cksum | awk '{print $1}')
-	fi
-
-	local now
-	now=$(date +%s)
-
-	if [ -n "${NOTIFY_DEDUPE_SECONDS:-}" ] && [ "${NOTIFY_DEDUPE_SECONDS:-0}" -eq "${NOTIFY_DEDUPE_SECONDS:-0}" ] 2>/dev/null && [ "${NOTIFY_DEDUPE_SECONDS:-0}" -gt 0 ]; then
-		mkdir -p "$NOTIFY_DEDUPE_DIR" 2>/dev/null || true
-		local dedupe_file="$NOTIFY_DEDUPE_DIR/n-${replace_id}"
-		if [ -f "$dedupe_file" ]; then
-			local old_ts old_hash
-			read -r old_ts old_hash <"$dedupe_file" || true
-			if [ -n "$old_ts" ] && [ "$old_hash" = "$body_hash" ] && [ "$((now - old_ts))" -lt "$NOTIFY_DEDUPE_SECONDS" ]; then
-				echo "$(l10n msg_notify_dedupe "$NOTIFY_DEDUPE_SECONDS")" | tee -a "$LOGFILE"
-				return 0
-			fi
-		fi
-	fi
-
-	local -a ns
-	ns=(-a "$NOTIFY_APP_NAME" -i dialog-warning -u critical -t 0)
-	if [ -n "$replace_id" ] && [ "$replace_id" != "0" ]; then
-		ns+=(-r "$replace_id")
-	fi
-	ns+=("$(l10n notify_title)" "$body")
-
-	sudo -u "$user" DISPLAY="$display" DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus notify-send "${ns[@]}"
-
-	if [ -n "${NOTIFY_DEDUPE_SECONDS:-}" ] && [ "${NOTIFY_DEDUPE_SECONDS:-0}" -eq "${NOTIFY_DEDUPE_SECONDS:-0}" ] 2>/dev/null && [ "${NOTIFY_DEDUPE_SECONDS:-0}" -gt 0 ]; then
-		mkdir -p "$NOTIFY_DEDUPE_DIR" 2>/dev/null || true
-		printf '%s %s\n' "$now" "$body_hash" >"$NOTIFY_DEDUPE_DIR/n-${replace_id}" 2>/dev/null || true
-	fi
+	sudo -u "$user" DISPLAY="$display" DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"$uid"/bus \
+		notify-send -a "$NOTIFY_APP_NAME" -i dialog-warning -u critical -t 0 \
+		"$(l10n notify_title)" "$body"
 }
 
 # --- 1. Timeshift ---
@@ -291,7 +291,7 @@ TIMESHIFT_CONFIG="/etc/timeshift/timeshift.json"
 
 if [ ! -f "$TIMESHIFT_CONFIG" ]; then
 	echo "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")" "$RID_ERR_CONFIG_MISSING"
+	send_notification "$(l10n err_timeshift_config_missing "$TIMESHIFT_CONFIG")"
 	exit 1
 fi
 
@@ -307,12 +307,12 @@ done
 
 if echo "$output" | grep -q "Another instance of this application is running"; then
 	echo "$(l10n err_exit_timeshift_running)" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_exit_timeshift_running)" "$RID_ERR_TIMESHIFT_RUNNING"
+	send_notification "$(l10n err_exit_timeshift_running)"
 	exit 1
 
 elif ! echo "$output" | grep -q "Mounted '/dev/"; then
 	echo "$(l10n err_timeshift_not_setup)" | tee -a "$LOGFILE"
-	send_notification "$(l10n err_timeshift_not_setup)" "$RID_ERR_TIMESHIFT_NOT_SETUP"
+	send_notification "$(l10n err_timeshift_not_setup)"
 	exit 1
 fi
 
@@ -327,7 +327,7 @@ if [ -n "$latest_snapshot" ]; then
 		snapshot_age_days=$(( (now_epoch - snapshot_epoch) / 86400 ))
 		if [ "$snapshot_age_days" -gt "$MAX_SNAPSHOT_AGE_DAYS" ]; then
 			echo "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")" | tee -a "$LOGFILE"
-			send_notification "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")" "$RID_STALE_SNAPSHOT"
+			send_notification "$(l10n warn_last_snapshot_old "$latest_snapshot" "$MAX_SNAPSHOT_AGE_DAYS")"
 		fi
 	fi
 fi
@@ -337,9 +337,8 @@ partitions=$(echo "$output" | grep "Mounted '/dev/" | awk -F"'" '{print $2}' | x
 for partition in $partitions; do
 	fstype=$(lsblk -no FSTYPE "/dev/$partition")
 	if [ "$fstype" != "btrfs" ]; then
-		rid_btrfs=$(notify_replace_id 100000 "btrfs:${partition}")
 		echo "$(l10n err_not_btrfs "/dev/$partition")" | tee -a "$LOGFILE"
-		send_notification "$(l10n err_not_btrfs "/dev/$partition")" "$rid_btrfs"
+		send_notification "$(l10n err_not_btrfs "/dev/$partition")"
 		exit 1
 	fi
 done
@@ -352,16 +351,15 @@ for partition in $partitions; do
 	echo "$(l10n line_disk_usage "$(date)" "$partition" "$disk_usage")" | tee -a "$LOGFILE"
 
 	if [ "$disk_usage" -gt "$DISK_USAGE_LIMIT" ]; then
-		rid_limit=$(notify_replace_id 120000 "limit:${partition}")
 		echo "$(l10n msg_above_limit_log "$DISK_USAGE_LIMIT")" | tee -a "$LOGFILE"
-		send_notification "$(l10n notify_above_limit "$partition" "$DISK_USAGE_LIMIT")" "$rid_limit"
+		send_notification "$(l10n notify_above_limit "$partition" "$DISK_USAGE_LIMIT")"
 
 		while true; do
 			total_snapshots=$(timeshift --list | grep -c "    >  ")
 			echo "$(l10n msg_total_snap "$total_snapshots")" | tee -a "$LOGFILE"
 			if [ "$total_snapshots" -le "$SNAPSHOT_LIMIT" ]; then
 				echo "$(l10n msg_no_more_log "$total_snapshots")" | tee -a "$LOGFILE"
-				send_notification "$(l10n notify_no_more "$total_snapshots")" "$RID_SNAPSHOT_LIMIT_REACHED"
+				send_notification "$(l10n notify_no_more "$total_snapshots")"
 				break
 			fi
 
@@ -377,9 +375,8 @@ for partition in $partitions; do
 			fi
 		done
 	elif [ "$disk_usage" -gt "$DISK_USAGE_WARNING_LIMIT" ]; then
-		rid_warn=$(notify_replace_id 140000 "warn:${partition}")
 		echo "$(l10n warn_threshold_log "$partition" "$DISK_USAGE_WARNING_LIMIT")" | tee -a "$LOGFILE"
-		send_notification "$(l10n notify_warn_threshold "$partition" "$DISK_USAGE_WARNING_LIMIT")" "$rid_warn"
+		send_notification "$(l10n notify_warn_threshold "$partition" "$DISK_USAGE_WARNING_LIMIT")"
 	else
 		echo "$(l10n msg_ok "$partition" "$disk_usage")" | tee -a "$LOGFILE"
 	fi
